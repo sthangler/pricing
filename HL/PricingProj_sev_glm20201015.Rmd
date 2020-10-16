@@ -1,0 +1,485 @@
+---
+title: "Severity GLM"
+author: "Hao L"
+date: "Oct 14, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library}
+library(earth)
+library(tidyverse)
+library(tweedie)
+library(caret)
+library(plotly)
+library(rsample) #data splitting
+library(pdp) #variable relationship
+library(vip) #variable importance
+library(ggplot2)
+library(lazyeval)
+library(DT)
+library(data.table)
+```
+
+
+```{r dataload}
+setwd("C:/Users/hzx00/Desktop/InsuranceMarketResearch/mlwp3/Pricing/FinalData")
+source("C:/Users/hzx00/Desktop/InsuranceMarketResearch/mlwp3/Pricing/utils_mod.R")
+
+tr<-read.csv(file = 'train.csv', header=TRUE)
+tr<-data.table(tr)
+
+ts<-read.csv(file='test.csv', header=TRUE)
+ts<-data.table(ts)
+
+head(tr)
+```
+
+```{r data_check}
+# all column names
+colnames(tr)
+
+# all numeric columns
+numlist <- which(sapply(tr, is.numeric))
+num_dist <- data.frame(sapply(1:length(numlist), function(x) summary(tr[, numlist[[x]], with=FALSE], useNA='ifany')))
+colnames(num_dist)<-names(numlist)
+
+# all non-numeric columns
+charlist <- which(sapply(tr, is.factor))
+
+char_dist<- sapply(1:length(charlist), function(x) table(tr[, charlist[[x]], with=FALSE], useNA='ifany'))
+names(char_dist)<-names(charlist)
+
+# show the distribution of all variables
+num_dist
+char_dist
+sapply(1:length(charlist), function(x) table(tr[, charlist[[x]], with=FALSE], useNA='ifany'))
+
+
+```
+
+
+```{r profiling_chart, echo=TRUE}
+numlist
+
+plot_act_metrics(tr, VehPower, n = 10, categorical = FALSE, Exposure, losses=ClaimAmount, numbers=ClaimNb)
+plot_act_metrics(tr, VehAge, n = 10, categorical = FALSE, Exposure, losses=ClaimAmount, numbers=ClaimNb)
+plot_act_metrics(tr, DrivAge, n = 10, categorical = FALSE, Exposure, losses=ClaimAmount, numbers=ClaimNb)
+plot_act_metrics(tr, BonusMalus, n = 10, categorical = FALSE, Exposure, losses=ClaimAmount, numbers=ClaimNb)
+plot_act_metrics(tr, Density, n = 50, categorical = FALSE, Exposure, losses=ClaimAmount, numbers=ClaimNb)
+
+
+charlist
+
+plot_act_metrics(tr, Area, n = 10, categorical = TRUE, Exposure, losses=ClaimAmount, numbers=ClaimNb)
+plot_act_metrics(tr, VehBrand, n = 10, categorical = TRUE, Exposure, losses=ClaimAmount, numbers=ClaimNb)
+plot_act_metrics(tr, VehGas, n = 10, categorical = TRUE, Exposure, losses=ClaimAmount, numbers=ClaimNb)
+plot_act_metrics(tr, Region, n = 10, categorical = TRUE, Exposure, losses=ClaimAmount, numbers=ClaimNb)
+plot_act_metrics(tr, DrivAgeBand, n = 10, categorical = TRUE, Exposure, losses=ClaimAmount, numbers=ClaimNb)
+plot_act_metrics(tr, DensityBand, n = 10, categorical = TRUE, Exposure, losses=ClaimAmount, numbers=ClaimNb)
+plot_act_metrics(tr, VehAgeBand, n = 10, categorical = TRUE, Exposure, losses=ClaimAmount, numbers=ClaimNb)
+
+```
+
+
+```{r sevmodel}
+# Baseline model
+tr1<-tr[ClaimAmount>0,]
+
+sev01 <- glm(ClaimAmount ~  Area + VehBrand + VehGas + Region + 
+               VehPower + VehAge + DrivAge + BonusMalus + Density,
+             data=tr1, family = Gamma(link = "log"), offset=log(ClaimNb))
+summary(sev01)
+
+```
+
+```{r sevmodel_improvement}
+# Improvement
+# Area
+tr1$Area<-as.character(tr1$Area)
+tr1 %>%
+plyr::mutate(AreaGrp =
+     dplyr::case_when(Area  %in%  c("A","E")     ~ "AE",
+                      TRUE           ~ Area
+       )) -> tr1
+
+# VehBrand
+tr1$VehBrand<-as.character(tr1$VehBrand)
+tr1 %>%
+plyr::mutate(VehBrandGrp =
+     dplyr::case_when(
+                      # VehBrand  %in%  c("B1")     ~ "B1",
+                      VehBrand  %in%  c("B11")           ~ "B11",
+                      VehBrand  %in%  c("B10","B12","B13") ~ "B10_12_13",
+                      VehBrand  %in%  c("B14","B2","B3","B4","B5") ~ "B14_2_3_4_5",
+                      TRUE           ~ VehBrand
+       )) -> tr1
+
+tr1$VehBrandGrp <- relevel(as.factor(tr1$VehBrandGrp), ref = "B14_2_3_4_5")
+
+tr1 %>%
+plyr::mutate(VehBrandGrp1 =
+     dplyr::case_when(
+                      # VehBrand  %in%  c("B1")     ~ "B1",
+                      VehBrand  %in%  c("B11")           ~ "B11",
+                      # VehBrand  %in%  c("B10","B12","B13") ~ "B10_12_13",
+                      # VehBrand  %in%  c("B14","B2","B3","B4","B5") ~ "B14_2_3_4_5",
+                      TRUE           ~ "Others"
+       )) -> tr1
+
+tr1$VehBrandGrp1 <- relevel(as.factor(tr1$VehBrandGrp1), ref = "Others")
+
+
+# Region
+tr1$Region<-as.character(tr1$Region)
+tr1 %>%
+plyr::mutate(RegionGrp =
+     dplyr::case_when(Region  %in%  c("R53")     ~ "R53",
+                      Region  %in%  c("R93")     ~ "R93",
+                      TRUE           ~ "Others"
+       )) -> tr1
+
+
+# BonusMalus
+tr1 %>%
+plyr::mutate(BonusMalusGrp =
+     dplyr::case_when(BonusMalus <=0.7 ~ "(0, 0.7]",
+                      BonusMalus >0.7 & BonusMalus <=0.95 ~ "(0.7, 0.95]",
+                      BonusMalus >0.95  ~ "(0.95, +inf]",
+                      TRUE           ~ "Others"
+       )) -> tr1
+
+
+# VehPowerGrp
+tr1 %>%
+plyr::mutate(VehPowerGrp =
+     dplyr::case_when(VehPower <=6 ~ "(0, 6]",
+                      VehPower ==7 ~ "7",
+                      VehPower ==8 ~ "8",
+                      VehPower ==9 ~ "9",
+                      VehPower >9  ~ "(9, +inf]",
+                      TRUE           ~ "Others"
+       )) -> tr1
+
+tr1 %>%
+plyr::mutate(VehPowerGrp1 =
+     dplyr::case_when(VehPower == 7 ~ "7",
+                      TRUE           ~ "Others"
+       )) -> tr1
+tr1$VehPowerGrp1 <- relevel(as.factor(tr1$VehPowerGrp1), ref = "Others")
+
+
+tr1 %>%
+plyr::mutate(VehPowerGrp2 =
+     dplyr::case_when(
+                      VehPower == 6 ~ "_6",
+                      VehPower == 7 ~ "_7",
+                      VehPower == 10~ "_10",
+                      TRUE           ~ "_Others"
+       )) -> tr1
+tr1$VehPowerGrp2 <- relevel(as.factor(tr1$VehPowerGrp2), ref = "_Others")
+
+
+tr1$VehPowerGrp0 <- relevel(as.factor(tr1$VehPower), ref = "5")
+
+tr1 %>% plyr::mutate(VehPower_GT8 = pmax(0, VehPower-8)) -> tr1
+
+# VehAge
+tr1 %>% plyr::mutate(VehAge_GT4 = pmax(0, VehAge-4)) -> tr1
+tr1 %>% plyr::mutate(VehAge_GT7 = pmax(0, VehAge-7)) -> tr1
+tr1 %>% plyr::mutate(VehAge_GT8 = pmax(0, VehAge-8)) -> tr1
+tr1 %>% plyr::mutate(VehAge_GT10 = pmax(0, VehAge-10)) -> tr1
+
+tr1 %>%
+plyr::mutate(VehAgeGrp =
+     dplyr::case_when(
+                      VehAge <=2 ~ "(0,2]",
+                      VehAge >2 & VehAge <= 4 ~ "(2,4]",
+                      VehAge >4 & VehAge <= 7 ~ "(4,7]",
+                      VehAge ==8 ~ "8",
+                      TRUE           ~ "(8,+inf)"
+       )) -> tr1
+tr1$VehAgeGrp <- relevel(as.factor(tr1$VehAgeGrp), ref = "(8,+inf)")
+
+
+# DrivAge
+tr1 %>%
+plyr::mutate(DrivAgeGrp =
+     dplyr::case_when(
+                      DrivAge <=26 ~ "(0,26]",
+                      DrivAge >26 & DrivAge <= 32 ~ "(26,32]",
+                      DrivAge >32 & DrivAge <= 41 ~ "(32,41]",
+                      DrivAge >41 & DrivAge <= 66 ~ "(41,66]",
+                      DrivAge >66 ~ "(66,+inf]",
+                      TRUE           ~ "Others"
+       )) -> tr1
+tr1$DrivAgeGrp <- relevel(as.factor(tr1$DrivAgeGrp), ref = "(41,66]")
+
+tr1 %>%
+plyr::mutate(DrivAgeGrp1 =
+     dplyr::case_when(
+                      DrivAge <=66 ~ "(0,66]",
+                      DrivAge >66 ~ "(66,+inf]",
+                      TRUE           ~ "Others"
+       )) -> tr1
+tr1$DrivAgeGrp1 <- relevel(as.factor(tr1$DrivAgeGrp1), ref = "(0,66]")
+
+
+# VehGas
+tr1$VehGas<-as.character(tr1$VehGas)
+tr1$VehGas <- relevel(as.factor(tr1$VehGas), ref = "Regular")
+
+
+# 2nd model
+sev02 <- glm(ClaimAmount ~  AreaGrp + VehBrandGrp1 + 
+               # VehGas +
+               RegionGrp + 
+               # VehPowerGrp0 +
+               VehPowerGrp2 + 
+               # VehPower + VehPower_GT8 +
+               # VehPowerGrp1 +
+               # + VehAge + 
+               # VehAgeGrp +
+               # VehAge_GT4 + VehAge_GT7 + VehAge_GT8 + VehAge_GT10 +
+               # DrivAge +
+               DrivAgeGrp1 +
+               BonusMalusGrp
+             # + Density
+             ,
+             data=tr1, family = Gamma(link = "log"), offset=log(ClaimNb))
+
+
+summary(sev02)
+
+pred_severity<-predict(sev02, data=tr1, type="response")
+
+gini_value(pred_severity, tr1$ClaimNb)
+gini_plot(pred_severity, tr1$ClaimNb)
+
+
+# check actual vs predicted
+dt_tr<-cbind(tr1, pred_severity)
+
+actpred <- function(data, var, n = 10, categorical = FALSE, weight, losses, predicted){
+  data <- data %>%
+  mutate(pred_losses = {{predicted}} * {{weight}})
+  
+  if (!categorical) {
+    table <- data %>%
+      mutate(feature = ntile({{var}}, n)) %>%
+      group_by(feature) %>%
+      summarise(
+        # prem = sum(premium),
+        exp = sum({{weight}}),
+        losses = sum({{losses}}),
+        predict = sum(pred_losses)
+        # , count = sum({{numbers}})
+        ) %>%
+      mutate(act = losses / exp,
+             # loss_ratio = losses / prem,
+             # frequency = count / exp,
+             # severity = losses / count
+             pred = predict / exp
+             ) %>%
+      na.omit()  
+    
+  } else {
+    
+    table <- data %>%
+      mutate(feature = as_factor({{var}})) %>%
+      group_by(feature) %>%
+      summarise(
+        # prem = sum(premium),
+        exp = sum({{weight}}),
+        losses = sum({{losses}}),
+        predict = sum(pred_losses)
+        # count = sum({{numbers}})
+        ) %>%
+      mutate(act = losses / exp,
+             # loss_ratio = losses / prem,
+             # frequency = count / exp,
+             # severity = losses / count
+             pred = predict /exp
+             ) %>%
+      na.omit()
+  }
+  
+  # return(table)
+  
+  scale_factor <- max(c(table$pred)) / max(table$exp)
+  
+  table %>%
+    select(feature, exp, losses, predict, act, pred) %>%
+    # tidyr::pivot_longer(c(act, pred)) %>%
+    ggplot()+
+    geom_bar(aes(x = as.factor(feature), y = 1/3 * exp * scale_factor), alpha = .5,
+             stat="identity", fill="grey")+
+    geom_line(aes(x = as.factor(feature), y = pred, group = 'pred', col = 'pred'))+
+    geom_point(aes(x = as.factor(feature), y = act, col = 'act'))+
+    xlab(enquo(var)) +
+    scale_y_continuous(sec.axis = sec_axis(~./(scale_factor * 1000), name = "Exposure (k)"))+
+    # labs(y = "Loss Cost")+
+    ggtitle(paste0("Loss Cost Comparison ", rlang::as_name(enquo(var))))+
+    labs(color = "")
+  
+}
+
+actpred(dt_tr, AreaGrp, n = 10, categorical = TRUE, weight=ClaimNb, losses=ClaimAmount, predicted=pred_severity)
+actpred(dt_tr, VehBrandGrp1, n = 10, categorical = TRUE, weight=ClaimNb, losses=ClaimAmount, predicted=pred_severity)
+actpred(dt_tr, VehGas, n = 10, categorical = TRUE, weight=ClaimNb, losses=ClaimAmount, predicted=pred_severity)
+actpred(dt_tr, RegionGrp, n = 10, categorical = TRUE, weight=ClaimNb, losses=ClaimAmount, predicted=pred_severity)
+
+
+```
+
+```{r sevmodel_ts}
+ts1<-ts[ClaimAmount >0, ]
+
+# Area
+ts1$Area<-as.character(ts1$Area)
+ts1 %>%
+plyr::mutate(AreaGrp =
+     dplyr::case_when(Area  %in%  c("A","E")     ~ "AE",
+                      TRUE           ~ Area
+       )) -> ts1
+
+# VehBrand
+ts1$VehBrand<-as.character(ts1$VehBrand)
+ts1 %>%
+plyr::mutate(VehBrandGrp =
+     dplyr::case_when(
+                      # VehBrand  %in%  c("B1")     ~ "B1",
+                      VehBrand  %in%  c("B11")           ~ "B11",
+                      VehBrand  %in%  c("B10","B12","B13") ~ "B10_12_13",
+                      VehBrand  %in%  c("B14","B2","B3","B4","B5") ~ "B14_2_3_4_5",
+                      TRUE           ~ VehBrand
+       )) -> ts1
+
+ts1$VehBrandGrp <- relevel(as.factor(ts1$VehBrandGrp), ref = "B14_2_3_4_5")
+
+ts1 %>%
+plyr::mutate(VehBrandGrp1 =
+     dplyr::case_when(
+                      # VehBrand  %in%  c("B1")     ~ "B1",
+                      VehBrand  %in%  c("B11")           ~ "B11",
+                      # VehBrand  %in%  c("B10","B12","B13") ~ "B10_12_13",
+                      # VehBrand  %in%  c("B14","B2","B3","B4","B5") ~ "B14_2_3_4_5",
+                      TRUE           ~ "Others"
+       )) -> ts1
+
+ts1$VehBrandGrp1 <- relevel(as.factor(ts1$VehBrandGrp1), ref = "Others")
+
+
+# Region
+ts1$Region<-as.character(ts1$Region)
+ts1 %>%
+plyr::mutate(RegionGrp =
+     dplyr::case_when(Region  %in%  c("R53")     ~ "R53",
+                      Region  %in%  c("R93")     ~ "R93",
+                      TRUE           ~ "Others"
+       )) -> ts1
+
+
+# BonusMalus
+ts1 %>%
+plyr::mutate(BonusMalusGrp =
+     dplyr::case_when(BonusMalus <=0.7 ~ "(0, 0.7]",
+                      BonusMalus >0.7 & BonusMalus <=0.95 ~ "(0.7, 0.95]",
+                      BonusMalus >0.95  ~ "(0.95, +inf]",
+                      TRUE           ~ "Others"
+       )) -> ts1
+
+
+# VehPowerGrp
+ts1 %>%
+plyr::mutate(VehPowerGrp =
+     dplyr::case_when(VehPower <=6 ~ "(0, 6]",
+                      VehPower ==7 ~ "7",
+                      VehPower ==8 ~ "8",
+                      VehPower ==9 ~ "9",
+                      VehPower >9  ~ "(9, +inf]",
+                      TRUE           ~ "Others"
+       )) -> ts1
+
+ts1 %>%
+plyr::mutate(VehPowerGrp1 =
+     dplyr::case_when(VehPower == 7 ~ "7",
+                      TRUE           ~ "Others"
+       )) -> ts1
+ts1$VehPowerGrp1 <- relevel(as.factor(ts1$VehPowerGrp1), ref = "Others")
+
+
+ts1 %>%
+plyr::mutate(VehPowerGrp2 =
+     dplyr::case_when(
+                      VehPower == 6 ~ "_6",
+                      VehPower == 7 ~ "_7",
+                      VehPower == 10~ "_10",
+                      TRUE           ~ "_Others"
+       )) -> ts1
+ts1$VehPowerGrp2 <- relevel(as.factor(ts1$VehPowerGrp2), ref = "_Others")
+
+
+ts1$VehPowerGrp0 <- relevel(as.factor(ts1$VehPower), ref = "5")
+
+ts1 %>% plyr::mutate(VehPower_GT8 = pmax(0, VehPower-8)) -> ts1
+
+# VehAge
+ts1 %>% plyr::mutate(VehAge_GT4 = pmax(0, VehAge-4)) -> ts1
+ts1 %>% plyr::mutate(VehAge_GT7 = pmax(0, VehAge-7)) -> ts1
+ts1 %>% plyr::mutate(VehAge_GT8 = pmax(0, VehAge-8)) -> ts1
+ts1 %>% plyr::mutate(VehAge_GT10 = pmax(0, VehAge-10)) -> ts1
+
+ts1 %>%
+plyr::mutate(VehAgeGrp =
+     dplyr::case_when(
+                      VehAge <=2 ~ "(0,2]",
+                      VehAge >2 & VehAge <= 4 ~ "(2,4]",
+                      VehAge >4 & VehAge <= 7 ~ "(4,7]",
+                      VehAge ==8 ~ "8",
+                      TRUE           ~ "(8,+inf)"
+       )) -> ts1
+ts1$VehAgeGrp <- relevel(as.factor(ts1$VehAgeGrp), ref = "(8,+inf)")
+
+
+# DrivAge
+ts1 %>%
+plyr::mutate(DrivAgeGrp =
+     dplyr::case_when(
+                      DrivAge <=26 ~ "(0,26]",
+                      DrivAge >26 & DrivAge <= 32 ~ "(26,32]",
+                      DrivAge >32 & DrivAge <= 41 ~ "(32,41]",
+                      DrivAge >41 & DrivAge <= 66 ~ "(41,66]",
+                      DrivAge >66 ~ "(66,+inf]",
+                      TRUE           ~ "Others"
+       )) -> ts1
+ts1$DrivAgeGrp <- relevel(as.factor(ts1$DrivAgeGrp), ref = "(41,66]")
+
+ts1 %>%
+plyr::mutate(DrivAgeGrp1 =
+     dplyr::case_when(
+                      DrivAge <=66 ~ "(0,66]",
+                      DrivAge >66 ~ "(66,+inf]",
+                      TRUE           ~ "Others"
+       )) -> ts1
+ts1$DrivAgeGrp1 <- relevel(as.factor(ts1$DrivAgeGrp1), ref = "(0,66]")
+
+
+# VehGas
+ts1$VehGas<-as.character(ts1$VehGas)
+ts1$VehGas <- relevel(as.factor(ts1$VehGas), ref = "Regular")
+
+
+pred_ts_severity<-predict(sev02, newdata=ts1, type="response")
+
+gini_value(pred_ts_severity, ts1$ClaimNb)
+gini_plot(pred_ts_severity, ts1$ClaimNb)
+
+
+
+```
+
+
