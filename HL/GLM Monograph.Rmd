@@ -1,0 +1,88 @@
+---
+title: "GLM"
+author: "MLWP3"
+date: "12/5/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Chapter XXX: Generalized Linear Model (GLM)
+
+_Generalized Linear Model_ (GLM) is a class of models made popular by McCullagh and Nelder (1982, 2nd edition 1989). In these models, the response variable (target/label) $y_i$ is assumed to follow an exponential family distribution with mean $\mu_i$, which is assumed to be some (often nonlinear) function of $X^T_i\beta$. Some would call these “nonlinear” because  $\mu_i$ is often a nonlinear function of the covariates, but McCullagh and Nelder consider them to be linear, because the covariates affect the distribution of $y_i$ only through the linear combination $X^T_i\beta$
+
+GLM is flexible with both continuous and categorical variables to be considered even though the cost of including categorical variables especially with large number of unique levels can be high in terms of model converging and run time.
+
+For most of the software, there are a few inputs, either mandatory or
+optional, that modelers need to provide in order to execute model run. The required ones are link function and distribution in most cases. In addition, offset and weight are two optional input commonly used based on the problem
+business attempts to solve.
+
+* Link function, $g(\mu)=\eta$, provides a connection between linear
+predictors $\eta$ and the mean $\mu$ of the distribution $Y|X$. There are a variety of link functions both canonical or non-canonical for individual distributions. The most common one used in insurance pricing is log link. It natually fits the need to accommodate multiplicative nature of the popular pricing plan.
+  
+* Distribution, the target of the GLM is assumed to be generated from a particular distribution in an exponential family, among which the most widely used in insurance pricing includes Poisson (frequency), gamma (severity), and Tweedie (lost cost and loss ratio).
+
+* Offset, a term included in the model which forces $\beta$ of the offset term to be one and simply means that the information needs to be removed as a constant from the response when model is being processed. For example, a typical log of exposure should be specified for a frequency model with response being count of claims. 
+
+* Weight is used to re-parameterize the dispersion of individual records. For instance, when the average claim amount, total claim amount divided by claim counts, is used as response in severity model, a weight needs to specified as claim counts.
+
+GLM is popular but it has some weaknesses other more advanced machine learning models can handle with ease. As our industry moves forward and no longer solely relies on GLM, it's beneficial to understand the pros and cons of GLM and use it properly and compare with other methods to make the best decision. 
+
+* Pros
+    + Interpretability
+
+      > GLM renders the result in the form of a linear combination at the core. Each individual variable can be tied to a $\beta$ which provides the meaning in both direction and magnitude. This turns the $\beta$ into a set of widely popular jargons like discount and surcharge that business, customers and regulators are comfortable to understand.
+    
+    + Intuitive and aligned with traditional multiplicative pricing plan
+    
+      > With log link, GLM can produce a result to be deployed in the multiplicatieve fashio, with exponentiated intercept $\beta_0$ as base rate and individual exponentiated $\beta_i - 1$ as discount or surchage. 
+      
+    + Require relatively small computing power and less system setup
+    
+      > Relativly speaking, GLM requires less computing power compared to its counterparts in ML-based models. In addition, it's so widely available and most of the common software, i.e. R, SAS, Python and etc., offers the packages/libraries to run GLM without any specific setup from system standpoint.
+      
+    + Straightforward to incorporate variable transformation and interaction
+    
+      > Most of the intuitive variable transformation, i.e. log, polynomial, splines, binning, and interaction can be done without major effort.  
+      
+    + Great track record being used by most of the insurance companies in the world
+    
+      > Due to the regulation in insurance pricing, GLM is always preferred due to its relatively successful track record in supporting business. It is not a black box like many ML-based methods and the result is intuive to leadership and stakeholders in business.
+      
+
+
+* Cons
+    + Challenging to handle data with large degree of freedom
+    
+      > A typical example is territory modeling. GLM is not a good candidate since the number of territories of interest can be hundreds or even thousands and GLM may get stuck in converging. 
+      
+    + Challenging to handle highly-correlated data
+      
+      > Multi-collinearity is a typical issue GLM faces when the model handles data highly correlated. The coefficients can behave erratically and model result can be unstable. It is always a good practice to check correlation among variables before testing in GLM.
+      
+    + Burdens to carry out specific feature engineering in order for GLM to handle compared to machine learning models
+      
+      > Many machine learning models don't require specific domain-knowledge based feature engineeing as extensively as GLM because the assumtpion is the ML-based models themselves can efficiently identify the underlying pattern and provide even more gain on insight of the current domain knowledge.
+    
+    + Limitation to capture underlying complicated non-linear relationship
+    
+      > Not all the non-linear relationship can be modeled by GLM due to its core of linearity. When more complicated non-linear relationship exists between the features and response, GLM can only provide the best proxy in a linear way, which many times turns to be inapproriate.
+      
+    + Limited prediction accuracy compared to certain ML-based models
+    
+      > GLM ML-based models generally outperform GLM in prediction accuracy. The GLM constraints in model distribution, functional form, relatively limited choices to accomodate feature  engineering, and etc. all lead to the limitation of accuracy in GLM. 
+      
+      
+
+
+
+
+
+_References_
+
+C.E. McCulloch and J.A. Nelder. _Generalized Linear Models_. Chapman and Hall, London, 1989
+
+M Goldburd, A Khare, D Tevet and D Guller. _Generalized Linear Models For Insurance Rating (Second Ediction)_. CAS Monograph Series No.5 2nd Ed, https://www.casact.org/pubs/monographs/papers/05-Goldburd-Khare-Tevet.pdf, 2019
+
